@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef, useMemo } from 'react'
+import { useEffect, useReducer, useRef, useMemo, useState } from 'react'
 import reactLogo from './assets/react.svg'
 import viteLogo from '/vite.svg'
 import './App.css'
@@ -17,20 +17,34 @@ function App() {
   const remoteVideoRef = useRef()
   const pc = useRef(new RTCPeerConnection(null))
   const textRef = useRef()
-  const candidates = useRef([])
+  const senders = useRef([]);
 
+  const [offerVisible, setOfferVisible] = useState(true)
+  const [answerVisible, setAnswerVisible] = useState(false)
+  const [status, setStatus] = useState('Make a call now')
+  
   useEffect(() => {
     socket.on("connection-success", success => {
       console.log(success)
     })
 
     socket.on("sdp", data => {
-      // console.log("offer/answer from server: data", data)
+      console.log("sdp socketon",data)
+      pc.current.setRemoteDescription(new RTCSessionDescription(data.sdp))
       textRef.current.value = JSON.stringify(data.sdp)
+
+      if(data?.sdp.type === "offer"){
+        setOfferVisible(false)
+        setAnswerVisible(true)
+        setStatus("incoming call....")
+      } else{
+        setStatus("call Established")
+      }
     })
 
     socket.on('candidate', candidate => {
-      candidates.current = [...candidates.current, candidate]
+      console.log("candidate socketon",candidate)
+      pc.current.addIceCandidate(new RTCIceCandidate(candidate))
     })
 
     const _pc = new RTCPeerConnection(null)
@@ -40,23 +54,22 @@ function App() {
       video: true,
     }
 
-    console.log("fn fired ")
     navigator.mediaDevices.getUserMedia(constraints)
     .then(stream => {
       localVideoRef.current.srcObject = stream
-
       stream.getTracks().forEach( track => {
         _pc.addTrack(track, stream)
       })
     })
     .catch( err => console.log("inside get user media stream",err))
 
+    shareScreen(_pc)
+
     //creating new rtc connection
     _pc.onicecandidate = (e) => {
       if(e.candidate) {
         console.log(JSON.stringify(e.candidate))
-
-        socket.emit('candidate', e.candidate)
+        sendToPeer('candidate', e.candidate)
       }
     }
 
@@ -73,17 +86,28 @@ function App() {
     pc.current = _pc
   }, [])
 
-  const addCandidate = () => {
-    candidates.current.forEach(candidate => {
-      // console.log('candidate from addCandidate', candidate)
-      pc.current.addIceCandidate(new RTCIceCandidate(candidate))
-    })
+  // const shareScreen = (pc) => {
+  //   navigator.mediaDevices.getDisplayMedia({
+  //     video: {
+  //         cursor: "always"
+  //     },
+  //     audio: false
+  //   })
+  //   .then(stream => {
+  //     remoteVideoRef.current.srcObject = stream
+  //     stream.getTracks().forEach(track => {
+  //       pc.addTrack(track, stream)
+  //     })
+  //   })
+  // }
+
+  const sendToPeer = (eventType, payload) => {
+    socket.emit(eventType, payload)
   }
 
-  const setRemoteDescription = () => {
-    const sdp = JSON.parse(textRef.current.value)
-    pc.current.setRemoteDescription(new RTCSessionDescription(sdp))
-    console.log(sdp)
+  const processSDP = (sdp) => {
+    pc.current.setLocalDescription(sdp)
+    sendToPeer('sdp', {sdp})
   }
 
   const createOffer = () => {
@@ -93,14 +117,10 @@ function App() {
 
     }).then(
       sdp => {
-        pc.current.setLocalDescription(sdp)
-
-        //send sdp to signalling server
-        socket.emit("sdp", {
-          sdp,
-        })
-      }
-    ).catch(err=> console.log("error in creating offer", err))
+        processSDP(sdp)
+        setOfferVisible(false)
+        setStatus("Calling the user")
+      }).catch(err=> console.log("error in creating offer", err))
   }
   
   const createAnswer = () => {
@@ -109,34 +129,29 @@ function App() {
       offerToReceiveAudio: 1,
 
     }).then(
-      sdp => {
-        console.log(JSON.stringify(sdp))
-        pc.current.setLocalDescription(sdp)
-
-        socket.emit("sdp", {
-          sdp
-        })
-      }
+        sdp => {
+          processSDP(sdp)
+          setAnswerVisible(true)
+          setStatus("call established")
+        }
     ).catch(err=> console.log("error in creating answer", err))
   }
 
-  // const getUserMedia = () => {
-  //   const constraints = {
-  //     audio: false,
-  //     video: true,
-  //   }
-
-  //   console.log("fn fired ")
-  //   navigator.mediaDevices.getUserMedia(constraints)
-  //   .then(stream => {
-  //     console.log("inside stream ")
-  //     localVideoRef.current.srcObject = stream
-  //     stream.getTracks().forEach( track => 
-        
-  //     )
-  //   })
-  //   .catch( err => console.log("inside get user media stream",err))
-  // }
+  const showHideButtons = () => {
+    if(offerVisible){
+      return (
+        <div>
+          <button onClick={createOffer}> Call </button>
+        </div>
+      )
+    } else if (answerVisible){
+      return (
+        <div>
+          <button onClick={createAnswer}> Answer </button>
+        </div>
+      )
+    }
+  }
 
   return (
     <div style={{ margin: 10 }}>
@@ -154,11 +169,9 @@ function App() {
       <textarea ref={textRef}></textarea>
       <br />
 
-    <button onClick={() => {createOffer()}}> create Offer</button>
-    <button onClick={() => {createAnswer()}}> create answer</button>
-    <button onClick={() => {setRemoteDescription()}}> set sdp</button>
-    <button onClick={() => {addCandidate()}}>  add candidate </button>
-  
+      {showHideButtons()}
+      <div>{status}</div>
+      {/* <button onClick={shareScreen}> Share your screen </button> */}
   </div>
   )
 }
