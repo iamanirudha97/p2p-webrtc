@@ -15,7 +15,7 @@ const app = express();
 app.use(express.json())
 app.use(cors())
 app.use( cors({
-    origin: "http://localhost:5174",
+    origin: "http://localhost:5173",
     methods: ["GET", "POST"],
     credentials: true,
   }))
@@ -23,7 +23,7 @@ app.use( cors({
 const server = http.createServer(app)
 const io = new Server(server,{
     cors: {
-        origin: "http://localhost:5174",
+        origin: "http://localhost:5173",
         methods: ["GET", "POST"],
         credentials: true,
       },
@@ -34,6 +34,7 @@ app.get("/", (req, res) => {
     res.send("Welcome to my webrtc server") 
 })
 
+let rooms = {}
 
 //socket connection
 io.on('connection', (socket) => {
@@ -44,15 +45,37 @@ io.on('connection', (socket) => {
         socketId: socket.id
     })
 
-    socket.on("sdp", data => {
-        console.log(data)
-        socket.broadcast.emit('sdp', data)
+    socket.on("join room", roomId => {
+        console.log("rooms before: ",rooms)
+        if(rooms[roomId]){
+            rooms[roomId].push(socket.id)
+        } else {
+            rooms[roomId] = [socket.id]
+        }
+        const otherUser = rooms[roomId].find(id => id !== socket.id);
+        if(otherUser){
+            socket.emit("other user", otherUser)
+            socket.to(otherUser).emit("user joined", socket.id);
+        }
+        console.log("rooms after: ",rooms)
+    })
+
+    socket.on("offer", data => {
+        console.log("offer received",data)
+        socket.broadcast.emit('offer', data)
     })
 
     socket.on('candidate', data => {
         console.log(data)
         socket.broadcast.emit('candidate', data)
     })
+
+    socket.on("answer", data => {
+        console.log("offer received",data)
+        socket.broadcast.emit('offer', data)
+        // io.to(payload.target).emit("answer", payload);
+    });
+
 
     socket.on('disconnect', () => {
         console.log('User disconnected: ', socket.id)
